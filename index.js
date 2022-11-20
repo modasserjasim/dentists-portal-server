@@ -44,7 +44,8 @@ run();
 
 const treatmentCollection = client.db('DentistsPortal').collection('treatments');
 const bookingCollection = client.db('DentistsPortal').collection('bookings');
-const userCollection = client.db('DentistsPortal').collection('users')
+const userCollection = client.db('DentistsPortal').collection('users');
+const doctorsCollection = client.db('DentistsPortal').collection('doctors');
 
 app.get('/jwt', async (req, res) => {
     const email = req.query.email;
@@ -141,6 +142,45 @@ app.get('/v2/treatments', async (req, res) => {
         console.log(error.name.bgRed, error.message.bold);
     }
 })
+
+//get appointmentSpecialty data from a collection
+app.get('/appointment-specialty', async (req, res) => {
+    const specialty = await treatmentCollection.find({}).project({ name: 1 }).toArray();
+    res.send(specialty);
+})
+
+// save doctors to the the doctorsCollections
+app.post('/doctors', async (req, res) => {
+    try {
+        const doctor = await doctorsCollection.insertOne(req.body);
+        res.send({
+            status: true,
+            message: 'A new doctor added'
+        })
+    } catch (error) {
+        res.send({
+            status: false,
+            error: error
+        })
+    }
+})
+
+// add doctors to manage-doctors route
+app.get('/doctors', async (req, res) => {
+    try {
+        const doctors = await doctorsCollection.find({}).toArray();
+        res.send({
+            status: true,
+            doctors: doctors
+        })
+    } catch (error) {
+        res.send({
+            status: false,
+            error: error
+        })
+    }
+})
+
 
 // insert booking info to db
 app.post('/booking', async (req, res) => {
