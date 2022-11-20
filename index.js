@@ -150,7 +150,7 @@ app.get('/appointment-specialty', async (req, res) => {
 })
 
 // save doctors to the the doctorsCollections
-app.post('/doctors', async (req, res) => {
+app.post('/doctors', verifyJWT, async (req, res) => {
     try {
         const doctor = await doctorsCollection.insertOne(req.body);
         res.send({
@@ -166,12 +166,29 @@ app.post('/doctors', async (req, res) => {
 })
 
 // add doctors to manage-doctors route
-app.get('/doctors', async (req, res) => {
+app.get('/doctors', verifyJWT, async (req, res) => {
     try {
         const doctors = await doctorsCollection.find({}).toArray();
         res.send({
             status: true,
             doctors: doctors
+        })
+    } catch (error) {
+        res.send({
+            status: false,
+            error: error
+        })
+    }
+})
+
+//delete a doctor
+app.delete('/doctor/:id', verifyJWT, async (req, res) => {
+    try {
+        const id = req.params.id;
+        const result = await doctorsCollection.deleteOne({ _id: ObjectId(id) });
+        res.send({
+            status: true,
+            message: 'The doctor has been deleted'
         })
     } catch (error) {
         res.send({
