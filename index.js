@@ -4,6 +4,9 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
 require('colors');
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
+
+
 const app = express();
 const port = process.env.PORT || 3500;
 
@@ -16,9 +19,14 @@ app.use(express.json());
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.vqm0pbr.mongodb.net/?retryWrites=true&w=majority`;
 const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true, serverApi: ServerApiVersion.v1 });
 
+const treatmentCollection = client.db('DentistsPortal').collection('treatments');
+const bookingCollection = client.db('DentistsPortal').collection('bookings');
+const userCollection = client.db('DentistsPortal').collection('users');
+const doctorsCollection = client.db('DentistsPortal').collection('doctors');
+
 function verifyJWT(req, res, next) {
     const authHeader = req.headers.authorization;
-    console.log({ authHeader });
+    // console.log({ authHeader });
     if (!authHeader) {
         return res.status(401).send('Unauthorized access');
     }
@@ -32,6 +40,21 @@ function verifyJWT(req, res, next) {
     })
 }
 
+// note: we have to create this middleware after verifyJWT
+// CREATE verifyAdmin middleware
+const verifyAdmin = async (req, res, next) => {
+    console.log('Inside verifyAdmin', req.decoded.email);
+    const decodedEmail = req.decoded.email;
+    console.log(decodedEmail);
+    const query = { email: decodedEmail };
+    const user = await userCollection.findOne(query);
+    // console.log('user from 261', user);
+    if (user?.role !== 'admin') {
+        return res.status(403).send({ message: 'Forbidden access' })
+    }
+    next();
+}
+
 async function run() {
     try {
         await client.connect();
@@ -41,11 +64,6 @@ async function run() {
     }
 }
 run();
-
-const treatmentCollection = client.db('DentistsPortal').collection('treatments');
-const bookingCollection = client.db('DentistsPortal').collection('bookings');
-const userCollection = client.db('DentistsPortal').collection('users');
-const doctorsCollection = client.db('DentistsPortal').collection('doctors');
 
 app.get('/jwt', async (req, res) => {
     const email = req.query.email;
@@ -150,7 +168,7 @@ app.get('/appointment-specialty', async (req, res) => {
 })
 
 // save doctors to the the doctorsCollections
-app.post('/doctors', verifyJWT, async (req, res) => {
+app.post('/doctors', verifyJWT, verifyAdmin, async (req, res) => {
     try {
         const doctor = await doctorsCollection.insertOne(req.body);
         res.send({
@@ -166,7 +184,7 @@ app.post('/doctors', verifyJWT, async (req, res) => {
 })
 
 // add doctors to manage-doctors route
-app.get('/doctors', verifyJWT, async (req, res) => {
+app.get('/doctors', verifyJWT, verifyAdmin, async (req, res) => {
     try {
         const doctors = await doctorsCollection.find({}).toArray();
         res.send({
@@ -182,7 +200,7 @@ app.get('/doctors', verifyJWT, async (req, res) => {
 })
 
 //delete a doctor
-app.delete('/doctor/:id', verifyJWT, async (req, res) => {
+app.delete('/doctor/:id', verifyJWT, verifyAdmin, async (req, res) => {
     try {
         const id = req.params.id;
         const result = await doctorsCollection.deleteOne({ _id: ObjectId(id) });
@@ -244,7 +262,7 @@ app.get('/bookings', verifyJWT, async (req, res) => {
         // console.log(req.headers.authorization);
         const email = req.query.email;
         const decodedEmail = req.decoded.email;
-        console.log('inside booking', email, decodedEmail);
+        // console.log('inside booking', email, decodedEmail);
         if (email !== decodedEmail) {
             return res.status(403).send({ message: 'Forbidden access' })
         }
@@ -262,6 +280,26 @@ app.get('/bookings', verifyJWT, async (req, res) => {
             error: error.message
         })
     }
+
+})
+
+//find booking to payment
+app.get('/booking/:id', async (req, res) => {
+    try {
+        const id = req.params.id;
+        const query = { _id: ObjectId(id) };
+        const booking = await bookingCollection.findOne(query);
+        res.send({
+            status: true,
+            booking: booking
+        })
+    } catch (error) {
+        res.send({
+            status: false,
+            error: error
+        })
+    }
+
 
 })
 
@@ -310,16 +348,16 @@ app.get('/user/admin/:email', async (req, res) => {
     res.send({ isAdmin: user?.role === 'admin' });
 })
 
-app.put('/user/admin/:id', verifyJWT, async (req, res) => {
+app.put('/user/admin/:id', verifyJWT, verifyAdmin, async (req, res) => {
     try {
-        const decodedEmail = req.decoded.email;
-        console.log(decodedEmail);
-        const query = { email: decodedEmail };
-        const user = await userCollection.findOne(query);
-        console.log('user from 261', user);
-        if (user?.role !== 'admin') {
-            return res.status(403).send({ message: 'Forbidden access' })
-        }
+        // const decodedEmail = req.decoded.email;
+        // console.log(decodedEmail);
+        // const query = { email: decodedEmail };
+        // const user = await userCollection.findOne(query);
+        // console.log('user from 261', user);
+        // if (user?.role !== 'admin') {
+        //     return res.status(403).send({ message: 'Forbidden access' })
+        // }
 
         // before JWT
         const id = req.params.id;
@@ -343,6 +381,40 @@ app.put('/user/admin/:id', verifyJWT, async (req, res) => {
         })
     }
 })
+
+// temprary update price field on appointment options
+/*app.get('/addPrice', async (req, res) => {
+    const filter = {};
+    const options = { upsert: true };
+    const updatedDoc = {
+        $set: {
+            price: 99
+        }
+    }
+    const result = await treatmentCollection.updateMany(filter, updatedDoc, options);
+    res.send(result);
+})*/
+
+// payment gateway integration
+app.post("/create-payment-intent", async (req, res) => {
+    const booking = req.body;
+    const price = booking.price;
+    const amount = price * 100;
+
+    // Create a PaymentIntent with the order amount and currency
+    const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: [
+            "card"
+        ]
+    });
+    console.log(paymentIntent);
+
+    res.send({
+        clientSecret: paymentIntent.client_secret,
+    });
+});
 
 app.get('/', (req, res) => {
     res.send("Dentists Portal Server is Running");
