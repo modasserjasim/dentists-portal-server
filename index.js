@@ -23,6 +23,7 @@ const treatmentCollection = client.db('DentistsPortal').collection('treatments')
 const bookingCollection = client.db('DentistsPortal').collection('bookings');
 const userCollection = client.db('DentistsPortal').collection('users');
 const doctorsCollection = client.db('DentistsPortal').collection('doctors');
+const paymentsCollection = client.db('DentistsPortal').collection('payments');
 
 function verifyJWT(req, res, next) {
     const authHeader = req.headers.authorization;
@@ -409,12 +410,41 @@ app.post("/create-payment-intent", async (req, res) => {
             "card"
         ]
     });
-    console.log(paymentIntent);
 
     res.send({
         clientSecret: paymentIntent.client_secret,
     });
 });
+
+// save payments to db
+app.post('/payment', async (req, res) => {
+    try {
+        const payment = req.body;
+        const result = await paymentsCollection.insertOne(payment);
+
+        const id = payment.bookingId;
+        const filter = { _id: ObjectId(id) };
+        const updatedDoc = {
+            $set: {
+                paid: true,
+                transactionId: payment.transactionId
+            }
+        }
+
+        const updatedResult = await bookingCollection.updateOne(filter, updatedDoc);
+
+        res.send({
+            status: true,
+            message: "The payment has been completed!"
+        })
+    } catch (error) {
+        res.send({
+            status: false,
+            error: error
+        })
+    }
+
+})
 
 app.get('/', (req, res) => {
     res.send("Dentists Portal Server is Running");
